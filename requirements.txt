@@ -1,5 +1,3 @@
-selenium
-webdriver-manager
-requests
-undetected-chromedriver
+selenium>=4.15.0
 pyotp
+requests
