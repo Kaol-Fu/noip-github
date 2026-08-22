@@ -35,15 +35,14 @@ def send_telegram(message, photo_path=None):
 
 def renew():
     options = uc.ChromeOptions()
-    options.add_argument("--headless") 
+    options.add_argument("--headless=new") # Đổi sang cờ headless thế hệ mới giúp tự nhận diện driver chuẩn
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-dev-shm-usage")
     
     print("🤖 Khởi tạo Trình duyệt Ẩn danh (Undetected Chromedriver)...")
-    # Ép driver chạy phiên bản 149 để khớp với trình duyệt hệ thống
-    driver = uc.Chrome(options=options, version_main=149)
-
+    # XÓA version_main=149 để driver tự động ăn theo phiên bản Chrome của hệ thống (151+)
+    driver = uc.Chrome(options=options)
     driver.set_window_size(1280, 1024)
 
     try:
@@ -84,9 +83,8 @@ def renew():
             otp_code = str(totp.now())
             print(f"🔑 Mã OTP khởi tạo thành công: {otp_code}")
             
-            # Lấy toàn bộ ô nhập văn bản/số trong form
+            # Lấy các ô nhập hiển thị thực tế
             all_inputs = driver.find_elements(By.XPATH, "//form//input[@type='text' or @type='number' or not(@type)]")
-            # LỌC SẠCH: Chỉ giữ lại các ô thực sự hiển thị trên màn hình để tương tác
             visible_inputs = [inp for inp in all_inputs if inp.is_displayed()]
             
             print(f"📊 Tìm thấy {len(visible_inputs)} ô nhập hiển thị thực tế trên màn hình.")
@@ -99,19 +97,18 @@ def renew():
                         visible_inputs[i].send_keys(otp_code[i])
                         time.sleep(0.1)
                     except Exception as input_err:
-                        print(f"⚠️ Không thể gõ vào ô thứ {i+1}: {input_err}")
+                        print(f"⚠️ Lỗi ô thứ {i+1}: {input_err}")
                 
-                # Tìm nút bấm xanh mang chữ "Verify" (Bất kể nó là thẻ gì: a, button, input)
                 print("🖱️ Đang kích hoạt nút Verify...")
                 time.sleep(1)
                 try:
                     verify_btn = driver.find_element(By.XPATH, "//*[contains(text(), 'Verify') or @value='Verify']")
                     verify_btn.click()
                 except:
-                    print("⚠️ Không click được nút bằng Xpath, thử gửi lệnh Enter trực tiếp từ ô cuối...")
+                    print("⚠️ Gửi lệnh Enter trực tiếp từ ô cuối...")
                     visible_inputs[5].send_keys(Keys.ENTER)
             else:
-                print("📝 Phát hiện giao diện 1 ô nhập OTP liền chuỗi. Tiến hành điền thẳng...")
+                print("📝 Điền thẳng vào ô nhập OTP 2FA dạng liền...")
                 try:
                     otp_field = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@id='mfa-code' or @name='code' or contains(@class, 'form-control')]")))
                     otp_field.clear()
@@ -130,7 +127,7 @@ def renew():
 
         if "login" in driver.current_url:
             driver.save_screenshot("dashboard_failed.png")
-            raise Exception("Bị đá về trang đăng nhập! Có thể mã OTP sinh ra bị lệch chu kỳ thời gian hoặc sai Secret Key.")
+            raise Exception("Bị đá về trang đăng nhập! Phiên làm việc không được chấp nhận.")
 
         print("Checking for hosts to renew...")
         confirm_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Confirm')]")
