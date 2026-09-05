@@ -43,7 +43,7 @@ def enter_otp_and_submit(driver, otp_code):
                 el.dispatchEvent(new KeyboardEvent('keydown', { key: val, bubbles: true }));
                 el.dispatchEvent(new KeyboardEvent('keyup', { key: val, bubbles: true }));
             """, inp, digit)
-            time.sleep(0.1)
+            time.sleep(0.15)
         
         time.sleep(1)
         try:
@@ -72,7 +72,6 @@ def renew():
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 20)
 
     try:
         # 1. ĐĂNG NHẬP USERNAME / PASSWORD
@@ -86,35 +85,28 @@ def renew():
         p_field.send_keys(Keys.ENTER)
         time.sleep(6)
 
-        # 2. XỬ LÝ 2FA
-        totp = pyotp.TOTP(NOIP_2FA_SECRET)
-        offsets = [0, -30, 30]
-        
-        for attempt, offset in enumerate(offsets, start=1):
-            current_url = driver.current_url.lower()
-            if "2fa" not in current_url and "verify" not in current_url and "login" not in current_url:
-                print("✅ Đã vượt qua 2FA và hệ thống đang tự chuyển hướng!")
-                break
-
-            print(f"🔐 Nhập 2FA lần {attempt}/{len(offsets)}...")
-            otp_code = totp.at(time.time() + offset)
+        # 2. XỬ LÝ 2FA (ĐIỀN 1 LẦN DUY NHẤT)
+        current_url = driver.current_url.lower()
+        if "2fa" in current_url or "verify" in current_url:
+            print("🔐 Phát hiện trang xác minh 2FA. Đang tạo mã OTP...")
+            totp = pyotp.TOTP(NOIP_2FA_SECRET)
+            otp_code = totp.now()
+            
             enter_otp_and_submit(driver, otp_code)
-            time.sleep(8)
+            print("⏳ Đã điền OTP. Đang chờ hệ thống xác thực và cấp Session Token (15s)...")
+            time.sleep(15)
 
-        # 3. ĐỜI HỆ THỐNG TỰ CHUYỂN VỀ MY.NOIP.COM
-        print("⏳ Đang đợi hệ thống ghi nhận Session và chuyển tới Dashboard...")
-        try:
-            wait.until(EC.url_contains("my.noip.com"))
-        except Exception:
-            # Nếu hết 20s không tự chuyển thì mới điều hướng bằng JS để giữ session
-            print("Chuyển hướng thủ công sang Dynamic DNS Dashboard...")
-            driver.execute_script("window.location.href = 'https://my.noip.com/dynamic-dns';")
-            time.sleep(8)
+        # 3. ĐIỀU HƯỚNG TỚI DYNAMIC DNS DASHBOARD
+        print("🚀 Đang truy cập trang Dynamic DNS...")
+        driver.get("https://my.noip.com/dynamic-dns")
+        time.sleep(10)
 
+        current_url = driver.current_url.lower()
         print(f"📍 URL hiện tại: {driver.current_url}")
-        
-        if "login" in driver.current_url.lower():
-            raise Exception("Hệ thống từ chối Session! Kiểm tra lại thông tin tài khoản hoặc OTP Secret Key.")
+
+        # Kiểm tra chuẩn: Chỉ coi là thất bại nếu bị đẩy về hẳn trang login gốc của www.noip.com
+        if "www.noip.com/login" in current_url:
+            raise Exception("Hệ thống từ chối xác thực và đẩy về trang Đăng nhập chính!")
 
         # 4. THỰC HIỆN GIA HẠN HOST
         print("Đang kiểm tra danh sách Host...")
