@@ -8,28 +8,39 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# --- LẤY BIẾN MÔI TRƯỜNG ---
+# --- CONFIGURATION ---
 USERNAME = os.environ['NOIP_USERNAME']
 PASSWORD = os.environ['NOIP_PASSWORD']
 NOIP_2FA_SECRET = os.environ.get('NOIP_2FA_SECRET', '').replace(" ", "").strip()
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-def send_telegram(msg, photo=None):
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID): return
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
-        if photo and os.path.exists(photo):
-            with open(photo, 'rb') as f:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': f}, timeout=15)
-    except Exception as e:
-        print(f"Lỗi Telegram: {e}")
+def send_telegram(message, photo_path=None):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    if photo_path and os.path.exists(photo_path):
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        try:
+            with open(photo_path, 'rb') as photo:
+                files = {'photo': photo}
+                data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': message}
+                requests.post(url, data=data, files=files, timeout=15)
+            return
+        except Exception as e:
+            print(f"❌ Failed to send Telegram photo: {e}")
 
-def enter_otp_and_submit(driver, otp_code):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try: 
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=10)
+    except: 
+        pass
+
+def enter_otp_native(driver, otp_code):
+    """Mô phỏng nhập OTP qua Native JS Event để kích hoạt React Form"""
     inputs = [i for i in driver.find_elements(By.TAG_NAME, "input") if i.is_displayed()]
     
     if len(inputs) >= 6:
-        print(f"🧩 Đang điền mã OTP: {otp_code}...")
+        print(f"🧩 Đang truyền 6 số OTP ({otp_code}) vào các ô riêng biệt qua Native Event...")
         for i in range(6):
             digit = otp_code[i]
             inp = inputs[i]
@@ -43,7 +54,7 @@ def enter_otp_and_submit(driver, otp_code):
                 el.dispatchEvent(new KeyboardEvent('keydown', { key: val, bubbles: true }));
                 el.dispatchEvent(new KeyboardEvent('keyup', { key: val, bubbles: true }));
             """, inp, digit)
-            time.sleep(0.15)
+            time.sleep(0.1)
         
         time.sleep(1)
         try:
@@ -53,7 +64,7 @@ def enter_otp_and_submit(driver, otp_code):
             inputs[5].send_keys(Keys.ENTER)
 
     elif len(inputs) == 1:
-        print(f"📝 Đang điền mã OTP vào 1 ô: {otp_code}...")
+        print(f"📝 Đang truyền OTP ({otp_code}) vào ô nhập dạng liền...")
         driver.execute_script("""
             var el = arguments[0];
             var val = arguments[1];
@@ -68,41 +79,61 @@ def renew():
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
+    print("🤖 Khởi tạo Trình duyệt Chrome...")
     driver = webdriver.Chrome(options=options)
+    driver.set_window_size(1280, 1024)
     wait = WebDriverWait(driver, 30)
 
     try:
-        # 1. ĐĂNG NHẬP USERNAME / PASSWORD
-        print("Mở trang đăng nhập No-IP...")
+        # 1. MỞ TRANG ĐĂNG NHẬP
+        print("Opening No-IP Login Page...")
         driver.get("https://www.noip.com/login")
         time.sleep(4)
 
-        driver.find_element(By.NAME, "username").send_keys(USERNAME)
-        p_field = driver.find_element(By.NAME, "password")
-        p_field.send_keys(PASSWORD)
-        p_field.send_keys(Keys.ENTER)
+        print("Filling login form...")
+        username_field = wait.until(EC.element_to_be_clickable((By.NAME, "username")))
+        username_field.clear()
+        username_field.send_keys(USERNAME)
+        print("🎯 Đã điền xong Username")
+        
+        password_field = wait.until(EC.element_to_be_clickable((By.NAME, "password")))
+        password_field.clear()
+        password_field.send_keys(PASSWORD)
+        print("🎯 Đã điền xong Password")
+        
+        print("Submitting login form via Enter key...")
+        password_field.send_keys(Keys.ENTER)
         time.sleep(6)
 
-        # 2. XỬ LÝ 2FA
         current_url = driver.current_url.lower()
+        print(f"📍 URL hiện tại sau khi gửi tài khoản: {driver.current_url}")
+        
+        # 2. XỬ LÝ 2FA
         if "2fa" in current_url or "verify" in current_url:
-            print("🔐 Phát hiện trang xác minh 2FA. Đang tính mã OTP...")
+            if not NOIP_2FA_SECRET:
+                driver.save_screenshot("2fa_error.png")
+                raise Exception("Phát hiện trang đòi mã xác minh nhưng thiếu NOIP_2FA_SECRET!")
+                
+            print("🔐 Tính toán mã OTP...")
             totp = pyotp.TOTP(NOIP_2FA_SECRET)
             # Thêm 2 giây bù trừ thời gian mạng/server
-            otp_code = totp.at(time.time() + 2)
+            otp_code = str(totp.at(time.time() + 2))
+            print(f"🔑 Mã OTP khởi tạo: {otp_code}")
             
-            enter_otp_and_submit(driver, otp_code)
-            print("⏳ Đã điền OTP. Đang chờ hệ thống tự động xác thực và điều hướng...")
+            enter_otp_native(driver, otp_code)
+            print("⏳ Đã gửi OTP, đang chờ hệ thống duyệt phiên và tự chuyển hướng...")
 
-        # 3. CHỜ ĐIỀU HƯỚNG TỰ NHIÊN ĐẾN MY.NOIP.COM
-        print("🚀 Đang chờ chuyển hướng sang Dashboard...")
+        # 3. TỰ ĐỘNG CHỜ ĐIỀU HƯỚNG TỚI MY.NOIP.COM
+        print("🚀 Đang đợi hệ thống cấp Token và chuyển tới Dashboard...")
         wait.until(EC.url_contains("my.noip.com"))
         time.sleep(8)
 
-        # Chuyển tiếp vào danh mục Dynamic DNS trên giao diện Dashboard
+        # Chuyển tiếp vào danh mục Dynamic DNS trên Dashboard nếu chưa tới hẳn
         if "dynamic-dns" not in driver.current_url:
             driver.get("https://my.noip.com/dynamic-dns")
             time.sleep(6)
@@ -110,31 +141,33 @@ def renew():
         print(f"📍 URL hiện tại: {driver.current_url}")
 
         if "login" in driver.current_url.lower() and "my.noip.com" not in driver.current_url:
-            raise Exception("Phiên đăng nhập thất bại và bị trả về trang Đăng nhập chính!")
+            driver.save_screenshot("dashboard_failed.png")
+            raise Exception("Bị đá về trang đăng nhập! Phiên làm việc không được chấp nhận.")
 
-        # 4. THỰC HIỆN GIA HẠN HOST
-        print("Đang kiểm tra danh sách Host...")
+        # 4. GIA HẠN HOST
+        print("Checking for hosts to renew...")
         time.sleep(3)
-        buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Confirm')]")
+        confirm_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Confirm')]")
         
-        if buttons:
+        if len(confirm_buttons) > 0:
             count = 0
-            for b in buttons:
-                driver.execute_script("arguments[0].click();", b)
+            for btn in confirm_buttons:
+                driver.execute_script("arguments[0].click();", btn)
                 count += 1
                 time.sleep(2)
-            msg = f"🎉 Đã gia hạn thành công {count} tên miền trên No-IP!"
+            success_msg = f"🎉 Success! Đã tự động gia hạn thành công {count} tên miền trên No-IP."
+            print(success_msg)
+            send_telegram(success_msg) 
         else:
-            msg = "✅ Đăng nhập thành công! Hiện tại không có tên miền nào cần gia hạn."
-
-        print(msg)
-        send_telegram(msg)
-
+            success_msg = "✅ Đăng nhập thành công. Không có tên miền nào cần bấm gia hạn hôm nay."
+            print(success_msg)
+            send_telegram(success_msg)
+            
     except Exception as e:
-        err = f"❌ Lỗi Bot Gia Hạn: {e}"
-        print(err)
+        error_msg = f"⚠️ No-IP Bot Thất Bại!\nLỗi: {str(e)}"
+        print(error_msg)
         driver.save_screenshot("error.png")
-        send_telegram(err, "error.png")
+        send_telegram(error_msg, photo_path="error.png")
         raise e
     finally:
         driver.quit()
