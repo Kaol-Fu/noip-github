@@ -72,6 +72,7 @@ def renew():
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=options)
+    wait = WebDriverWait(driver, 30)
 
     try:
         # 1. ĐĂNG NHẬP USERNAME / PASSWORD
@@ -85,28 +86,31 @@ def renew():
         p_field.send_keys(Keys.ENTER)
         time.sleep(6)
 
-        # 2. XỬ LÝ 2FA (ĐIỀN 1 LẦN DUY NHẤT)
+        # 2. XỬ LÝ 2FA
         current_url = driver.current_url.lower()
         if "2fa" in current_url or "verify" in current_url:
-            print("🔐 Phát hiện trang xác minh 2FA. Đang tạo mã OTP...")
+            print("🔐 Phát hiện trang xác minh 2FA. Đang tính mã OTP...")
             totp = pyotp.TOTP(NOIP_2FA_SECRET)
-            otp_code = totp.now()
+            # Thêm 2 giây bù trừ thời gian mạng/server
+            otp_code = totp.at(time.time() + 2)
             
             enter_otp_and_submit(driver, otp_code)
-            print("⏳ Đã điền OTP. Đang chờ hệ thống xác thực và cấp Session Token (15s)...")
-            time.sleep(15)
+            print("⏳ Đã điền OTP. Đang chờ hệ thống tự động xác thực và điều hướng...")
 
-        # 3. ĐIỀU HƯỚNG TỚI DYNAMIC DNS DASHBOARD
-        print("🚀 Đang truy cập trang Dynamic DNS...")
-        driver.get("https://my.noip.com/dynamic-dns")
-        time.sleep(10)
+        # 3. CHỜ ĐIỀU HƯỚNG TỰ NHIÊN ĐẾN MY.NOIP.COM
+        print("🚀 Đang chờ chuyển hướng sang Dashboard...")
+        wait.until(EC.url_contains("my.noip.com"))
+        time.sleep(8)
 
-        current_url = driver.current_url.lower()
+        # Chuyển tiếp vào danh mục Dynamic DNS trên giao diện Dashboard
+        if "dynamic-dns" not in driver.current_url:
+            driver.get("https://my.noip.com/dynamic-dns")
+            time.sleep(6)
+
         print(f"📍 URL hiện tại: {driver.current_url}")
 
-        # Kiểm tra chuẩn: Chỉ coi là thất bại nếu bị đẩy về hẳn trang login gốc của www.noip.com
-        if "www.noip.com/login" in current_url:
-            raise Exception("Hệ thống từ chối xác thực và đẩy về trang Đăng nhập chính!")
+        if "login" in driver.current_url.lower() and "my.noip.com" not in driver.current_url:
+            raise Exception("Phiên đăng nhập thất bại và bị trả về trang Đăng nhập chính!")
 
         # 4. THỰC HIỆN GIA HẠN HOST
         print("Đang kiểm tra danh sách Host...")
